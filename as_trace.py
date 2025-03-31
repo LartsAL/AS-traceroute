@@ -1,13 +1,37 @@
 import re
 import platform
+import socket
 import subprocess
 from ipwhois import IPWhois
 from prettytable import PrettyTable
 import pycountry
+import requests
+
+
+def check_internet_connection() -> bool:
+    """Проверяет наличие интернет-соединения."""
+    try:
+        requests.get("http://www.google.com", timeout=5)
+        return True
+    except (requests.ConnectionError, requests.Timeout):
+        return False
+
+
+def resolve_domain(target: str) -> str:
+    if re.match(r"(?:\d{1,3}\.){3}\d{1,3}", target):
+        return target
+
+    try:
+        ip = socket.gethostbyname(target)
+        return ip
+    except socket.gaierror:
+        raise RuntimeError(f"Не удалось разрешить доменное имя: {target}")
+    except Exception as e:
+        raise RuntimeError(f"Ошибка при разрешении доменного имени: {e}")
 
 
 def get_trace_command(target: str) -> list[str]:
-    """Выбор команды для трассировки в зависимости от ОС (Windows/Linux)."""
+    """Выбирает команду для трассировки в зависимости от ОС (Windows/Linux)."""
     system = platform.system().lower()
 
     if system == "windows":
@@ -21,8 +45,6 @@ def get_trace_command(target: str) -> list[str]:
 def parse_trace_output(output: str) -> list[str]:
     """Извлекает IPv4 адреса из вывода трассировки."""
     pattern = r"(?:\d{1,3}\.){3}\d{1,3}"  # x.x.x.x
-
-    print(f"Output:\n{output}")
 
     ips = []
 
@@ -39,7 +61,7 @@ def parse_trace_output(output: str) -> list[str]:
 
 
 def is_private_ip(ip: str) -> bool:
-    """Определение серых IPv4 адресов."""
+    """Определяет серые IPv4 адреса."""
     octets = list(map(int, ip.split(".")))
     return (
         (octets[0] == 10)  # 10.0.0.0/8
@@ -88,13 +110,35 @@ def print_results(ips: list[str]) -> None:
 
 
 def main():
-    target = input("Введите домен или IPv4: ").strip()
-
     try:
-        trace_cmd = get_trace_command(target)
-        result = subprocess.run(
-            trace_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
-        )
+        if not check_internet_connection():
+            print("Ошибка: Нет подключения к интернету.")
+            return
+
+        target = input("Введите домен или IPv4: ").strip()
+        if not target:
+            print("Ошибка: Необходимо указать домен или IPv4 адрес.")
+            return
+
+        target_ip = resolve_domain(target)
+
+        if is_private_ip(target_ip):
+            print("Ошибка: Невозможно выполнить трассировку для серых IP-адресов.")
+            return
+
+        trace_cmd = get_trace_command(target_ip)
+
+        try:
+            result = subprocess.run(
+                trace_cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            print("Ошибка: Трассировка заняла слишком много времени.")
+            return
 
         if result.stderr:
             print(f"Ошибка: {result.stderr}")
@@ -102,7 +146,7 @@ def main():
 
         ips = parse_trace_output(result.stdout)
         if not ips:
-            print("Не удалось извлечь IP-адреса.")
+            print("Ошибка: Не удалось извлечь IP-адреса.")
             return
 
         print_results(ips)
