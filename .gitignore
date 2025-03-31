@@ -128,6 +128,8 @@ celerybeat.pid
 *.sage.py
 
 # Environments
+.venv_windows/
+.venv_linux/
 .env
 .venv
 env/
@@ -172,3 +174,4 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+.qodo
